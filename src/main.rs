@@ -35,10 +35,11 @@ struct RetEnqueue {
 #[derive(Serialize, Default, Debug)]
 struct RetStatus {
     status: i32,
-    id: u32,
-    running: bool,
+    id: Option<u32>,
+    running: Option<bool>,
     cmd_result: Option<u32>,
-    stdout: String,
+    stdout: Option<String>,
+    msg: Option<String>,
 }
 
 #[derive(Deserialize, Default, Debug)]
@@ -90,23 +91,23 @@ fn enqueue(mng: State<ChanManager>, body: Json<BodyEnqueue>) -> Json<RetEnqueue>
     }
 }
 
+use rocket::response::status::NotFound;
+
 #[get("/status/<id>")]
-fn status(mng: State<ChanManager>, id: u32) -> Json<Ret> {
+fn status(mng: State<ChanManager>, id: u32) -> Result<Json<RetStatus>, NotFound<String>> {
     let retval = mng.retval.clone();
-    let x = match retval.read() {
-        Ok(map) => {
-            let got = map.get(&id);
-            Json(Ret {
-                status: 200,
-                msg: format!("Got: {:?}", got).into(),
-            })
-        }
-        Err(e) => Json(Ret {
-            status: 503,
-            msg: format!("Error: {:?}", e).into(),
-        }),
+    let map = retval.read().map_err(|e| NotFound(e.to_string()))?;
+    let got = map
+        .get(&id)
+        .ok_or(NotFound(format!("Not found: id={}", id)))?;
+    let got = got.lock().map_err(|e| NotFound(e.to_string()))?;
+
+    let ret = RetStatus {
+        status: 200,
+        stdout: got.clone().into(),
+        ..Default::default()
     };
-    x
+    Ok(Json(ret))
 }
 
 fn main() {
