@@ -37,7 +37,7 @@ struct RetStatus {
     status: i32,
     id: Option<u32>,
     running: Option<bool>,
-    cmd_result: Option<u32>,
+    cmd_result: Option<i32>,
     stdout: Option<String>,
     msg: Option<String>,
 }
@@ -53,8 +53,16 @@ struct Message {
     cmd: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct CommandResult {
+    id: u32,
+    running: bool,
+    cmd_result: Option<i32>,
+    stdout: String,
+}
+
 struct ChanManager {
-    pub retval: Arc<RwLock<HashMap<u32, Mutex<String>>>>,
+    pub retval: Arc<RwLock<HashMap<u32, Mutex<CommandResult>>>>,
     pub sender: Arc<channel::Sender<Message>>,
 }
 
@@ -104,7 +112,10 @@ fn status(mng: State<ChanManager>, id: u32) -> Result<Json<RetStatus>, NotFound<
 
     let ret = RetStatus {
         status: 200,
-        stdout: got.clone().into(),
+        id: got.id.into(),
+        running: got.running.into(),
+        cmd_result: got.cmd_result,
+        stdout: got.stdout.clone().into(),
         ..Default::default()
     };
     Ok(Json(ret))
@@ -149,17 +160,27 @@ fn main() {
                                     let content = {
                                         let map = store.read().expect("RwLock poisoned");
                                         match map.get(&got.id) {
-                                            None => line.clone(),
+                                            None => CommandResult {
+                                                id: got.id,
+                                                running: true,
+                                                cmd_result: None,
+                                                stdout: line.clone(),
+                                            },
                                             Some(existing) => {
                                                 let existing =
                                                     existing.lock().expect("Mutex poisoned");
-                                                format!("{}{}", existing, line)
+                                                CommandResult {
+                                                    id: existing.id,
+                                                    running: existing.running,
+                                                    cmd_result: existing.cmd_result,
+                                                    stdout: format!("{}{}", existing.stdout, line),
+                                                }
                                             }
                                         }
                                     };
                                     let mut map = store.write().expect("RwLock poisoned");
                                     *map.entry(got.id)
-                                        .or_insert_with(|| Mutex::new("".to_string())) =
+                                        .or_insert_with(|| Mutex::new(CommandResult::default())) =
                                         Mutex::new(content);
                                 }
                             }
@@ -172,6 +193,30 @@ fn main() {
                         match process.try_wait() {
                             Ok(Some(status)) => {
                                 println!("command {} exited with: {}", got.cmd, status);
+                                let content = {
+                                    let map = store.read().expect("RwLock poisoned");
+                                    match map.get(&got.id) {
+                                        None => CommandResult {
+                                            id: got.id,
+                                            running: false,
+                                            cmd_result: status.code(),
+                                            stdout: "".to_string(),
+                                        },
+                                        Some(existing) => {
+                                            let existing = existing.lock().expect("Mutex poisoned");
+                                            CommandResult {
+                                                id: existing.id,
+                                                running: false,
+                                                cmd_result: status.code(),
+                                                stdout: existing.stdout.clone(),
+                                            }
+                                        }
+                                    }
+                                };
+                                let mut map = store.write().expect("RwLock poisoned");
+                                *map.entry(got.id)
+                                    .or_insert_with(|| Mutex::new(CommandResult::default())) =
+                                    Mutex::new(content);
                                 break;
                             }
                             Ok(None) => {
