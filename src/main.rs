@@ -55,7 +55,7 @@ fn enqueue(mng: State<ChanManager>) -> Json<Ret> {
     let id = rand::thread_rng().gen();
     let msg = Message {
         id,
-        cmd: "sha512sum /Users/udzura/Documents/*.jpg".to_string(),
+        cmd: "for i in {1..10}; do sha512sum /Users/udzura/Documents/udzura-photo.jpg; sleep 3; echo next; done".to_string(),
     };
 
     let sender = mng.sender.clone();
@@ -126,10 +126,21 @@ fn main() {
                         match reader.read_line(&mut line) {
                             Ok(len) => {
                                 if len > 0 {
-                                    print!("Stdout: {}", line);
+                                    let content = {
+                                        let map = store.read().expect("RwLock poisoned");
+                                        match map.get(&got.id) {
+                                            None => line.clone(),
+                                            Some(existing) => {
+                                                let existing =
+                                                    existing.lock().expect("Mutex poisoned");
+                                                format!("{}{}", existing, line)
+                                            }
+                                        }
+                                    };
                                     let mut map = store.write().expect("RwLock poisoned");
-                                    map.entry(got.id)
-                                        .or_insert_with(|| Mutex::new(line.clone()));
+                                    *map.entry(got.id)
+                                        .or_insert_with(|| Mutex::new("".to_string())) =
+                                        Mutex::new(content);
                                 }
                             }
                             Err(e) => {
@@ -140,7 +151,7 @@ fn main() {
 
                         match process.try_wait() {
                             Ok(Some(status)) => {
-                                println!("exited with: {}", status);
+                                println!("command {} exited with: {}", got.cmd, status);
                                 break;
                             }
                             Ok(None) => {
