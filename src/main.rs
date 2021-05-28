@@ -1,15 +1,13 @@
 #![feature(proc_macro_hygiene, decl_macro)]
 
-#[macro_use]
 extern crate rocket;
 
 extern crate serde;
 
 use crossbeam::channel;
-use rocket::response::content;
 use rocket::*;
 use rocket_contrib::json::Json;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use std::io::prelude::*;
 use std::io::BufReader;
@@ -17,19 +15,38 @@ use std::os::unix::io::AsRawFd;
 use std::os::unix::io::FromRawFd;
 use std::{
     collections::HashMap,
-    rc::Rc,
     sync::{Arc, Mutex, RwLock},
     thread,
-    time::Duration,
 };
 
-#[derive(Serialize, Default)]
+#[derive(Serialize, Default, Debug)]
 struct Ret {
     status: i32,
     msg: Option<String>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Serialize, Default, Debug)]
+struct RetEnqueue {
+    status: i32,
+    id: Option<u32>,
+    msg: Option<String>,
+}
+
+#[derive(Serialize, Default, Debug)]
+struct RetStatus {
+    status: i32,
+    id: u32,
+    running: bool,
+    cmd_result: Option<u32>,
+    stdout: String,
+}
+
+#[derive(Deserialize, Default, Debug)]
+struct BodyEnqueue {
+    cmd: String,
+}
+
+#[derive(Debug, Clone, Default)]
 struct Message {
     id: u32,
     cmd: String,
@@ -48,25 +65,27 @@ fn index() -> Json<Ret> {
     })
 }
 
-#[get("/enqueue")]
-fn enqueue(mng: State<ChanManager>) -> Json<Ret> {
+#[post("/enqueue", data = "<body>")]
+fn enqueue(mng: State<ChanManager>, body: Json<BodyEnqueue>) -> Json<RetEnqueue> {
     use rand::Rng;
 
     let id = rand::thread_rng().gen();
     let msg = Message {
         id,
-        cmd: "for i in {1..10}; do sha512sum /Users/udzura/Documents/udzura-photo.jpg; sleep 3; echo next; done".to_string(),
+        cmd: body.cmd.clone(),
     };
 
     let sender = mng.sender.clone();
     match sender.send(msg) {
-        Ok(_) => Json(Ret {
+        Ok(_) => Json(RetEnqueue {
             status: 200,
-            msg: format!("Enqueued. ID: {}", id).into(),
+            id: id.into(),
+            msg: "Enqueued".to_string().into(),
         }),
-        Err(e) => Json(Ret {
+        Err(e) => Json(RetEnqueue {
             status: 503,
             msg: format!("Error: {:?}", e).into(),
+            ..Default::default()
         }),
     }
 }
