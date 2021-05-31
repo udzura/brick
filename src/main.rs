@@ -107,7 +107,7 @@ fn status(mng: State<ChanManager>, id: u32) -> Result<Json<RetStatus>, NotFound<
     let map = retval.read().map_err(|e| NotFound(e.to_string()))?;
     let got = map
         .get(&id)
-        .ok_or(NotFound(format!("Not found: id={}", id)))?;
+        .ok_or_else(|| NotFound(format!("Not found: id={}", id)))?;
     let got = got.lock().map_err(|e| NotFound(e.to_string()))?;
 
     let ret = RetStatus {
@@ -121,7 +121,7 @@ fn status(mng: State<ChanManager>, id: u32) -> Result<Json<RetStatus>, NotFound<
     Ok(Json(ret))
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (s, r) = channel::bounded::<Message>(256);
     let store = Arc::new(RwLock::new(HashMap::new()));
 
@@ -234,8 +234,10 @@ fn main() {
         };
     });
 
-    rocket::ignite()
-        .mount("/", routes![index, enqueue, status])
-        .manage(mng)
-        .launch();
+    Err(Box::new(
+        rocket::ignite()
+            .mount("/", routes![index, enqueue, status])
+            .manage(mng)
+            .launch(),
+    ))
 }
